@@ -13,10 +13,10 @@ target_include_directories(oshmpi_space PRIVATE ${OSHMPI_INCLUDE_DIRS})
 target_link_libraries(oshmpi_space PUBLIC ${OSHMPI_LIBRARIES})
 target_compile_definitions(oshmpi_space PRIVATE USE_CUDA=1)
 
-# Binaries stay in this directory rather than in the tier subdirectories: the
-# experiment job scripts under cluster/leonardo/experiments hardcode
-# build/<preset>/src/shmem/oshmpi/<target>, and the source layout is a reading aid, not
-# a deployment contract.
+# Binaries land here, not in the microbench/ and application/ subdirectories:
+# cluster/harness/job.sh resolves one path per backend from the registry in
+# cluster/<cluster>/backends.sh. The source layout is a reading aid; the flat
+# output directory is the contract.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Two tiers, see README "Benchmarks".

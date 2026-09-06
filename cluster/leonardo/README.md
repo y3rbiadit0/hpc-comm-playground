@@ -6,7 +6,7 @@ CMake presets, and Slurm runtime settings.
 
 Run all commands from the repository root on a Leonardo login node.
 
-## Prerequisites
+## 📋 Prerequisites
 
 The cluster modules provide CUDA, NVHPC, HPC-X, NCCL, NVSHMEM, CMake, and Ninja.
 Two SYCL prerequisites must be installed separately:
@@ -28,7 +28,7 @@ The expected compiler path is
 using another layout. `env/sycl.sh` resolves these compiler and library paths
 during environment setup.
 
-## Build
+## 🔧 Build
 
 Initialize the dependency stack and build every Leonardo preset with:
 
@@ -94,7 +94,103 @@ MPI implementations use the same MPI bundle without replacing DPC++ or CUDA
 12.2. The NCCL-backed oneCCL build uses its bundled MPI and therefore launches
 with its matching `mpirun`.
 
-## Run
+## 📡 Communication libraries
+
+Find your backend, read the last column, follow that recipe.
+
+| Backend | Library | Swap it? | How |
+| --- | --- | --- | --- |
+| `cuda_nvshmem` | NVSHMEM 2.11, or any release | ✅ per run | [Recipe A](#-recipe-a-swap-an-nvshmem-version) |
+| `oshmpi`, `sycl_oneccl_oshmpi` | OSHMPI at a pinned ref | ⚠️ rebuild | [Recipe B](#-recipe-b-swap-a-pinned-git-ref) |
+| `sycl_oneccl` | oneCCL at a pinned ref, on NCCL | ⚠️ rebuild | [Recipe B](#-recipe-b-swap-a-pinned-git-ref) |
+| `cuda_nccl` | NCCL (NVHPC 24.5) | 🔒 module | [Recipe C](#-recipe-c-swap-a-module-provided-library) |
+| `cuda_mpi`, `sycl_mpi` | HPC-X MPI 2.19 | 🔒 module | [Recipe C](#-recipe-c-swap-a-module-provided-library) |
+
+✅ means two choices coexist: separate prefixes, separate build trees, separate
+results trees. ⚠️ means they share all three -- you must rebuild and keep the
+results apart yourself. 🔒 means the version belongs to the site's module.
+
+### ✅ Recipe A: swap an NVSHMEM version
+
+Set one variable, then run the four steps in order. Everything downstream
+follows from it -- prefix, build tree, results tree, and the transport default.
+
+```bash
+export GPU_BENCH_NVSHMEM_VERSION=3.7.2                # 1. name the release
+
+./cluster/leonardo/bootstrap.sh nvshmem               # 2. fetch and verify it
+make leonardo-cuda                                    # 3. build against it
+cluster/harness/launch.sh --all halo_1d               # 4. measure it
+
+python3 tools/benchscribe results-nvshmem-3.7.2 --benchmark halo_1d
+```
+
+Unset the variable to go back to the module's 2.11. Do not clean anything in
+between -- the two selections never touch the same path:
+
+| | default (`module`) | `GPU_BENCH_NVSHMEM_VERSION=3.7.2` |
+| --- | --- | --- |
+| 📦 library | `nvhpc` module's NVSHMEM 2.11 | `$HOME/opt/gpu-comm-bench/nvshmem-3.7.2` |
+| 🔨 build | `build/leonardo-cuda-nvshmem` | `build-nvshmem-3.7.2/leonardo-cuda-nvshmem` |
+| 📈 results | `results/` | `results-nvshmem-3.7.2/` |
+
+Check the resolution before you submit anything:
+
+```bash
+cluster/harness/launch.sh --explain halo_1d cuda_nvshmem 2n4g
+```
+
+Four things to know:
+
+- Both runs report themselves as the `cuda_nvshmem` backend. They are the same
+  backend; the version is a property of the run, recorded in the path and in
+  each log's `ENV` block (`GPU_BENCH_NVSHMEM_VERSION`, `NVSHMEM_HOME`).
+- Step 2 downloads ~300 MB, verifies the checksum against NVIDIA's published
+  manifest, and probes that the stack's `nvcc` can device-link the result before
+  declaring success. Pass `GPU_BENCH_NVSHMEM_SHA256` for a release with no
+  checksum in `deps/nvshmem.sh`.
+- A 3.x selection switches the transport default to CPU-assisted IBGDA, which is
+  the reason to run one here at all. Set `NVSHMEM_REMOTE_TRANSPORT=ibrc` to hold
+  the transport constant and compare versions on the same proxy path.
+- Reach for this whenever the question is "does this library version change the
+  answer". It is the only library on Leonardo wired this way.
+
+### ⚠️ Recipe B: swap a pinned git ref
+
+oneCCL and OSHMPI are built from a branch, and both refs install to the same
+prefix and write to the same `results/`. Force the rebuild and separate the
+results yourself:
+
+```bash
+export GPU_BENCH_ONECCL_OSHMPI_REF=my-branch          # or _NCCL_REF
+GPU_BENCH_FORCE=1 make bootstrap TARGETS=oneccl-oshmpi
+
+GPU_BENCH_RESULTS_ROOT=results-my-branch \
+  cluster/harness/launch.sh --all halo_1d
+```
+
+Skip `GPU_BENCH_FORCE=1` and the bootstrap sees an installed prefix and does
+nothing. Skip `GPU_BENCH_RESULTS_ROOT` and benchscribe averages both refs into
+one cell.
+
+### 🔒 Recipe C: swap a module-provided library
+
+MPI and NCCL come from the site's modules, so changing one means editing the
+`module load` line in `env/cuda.sh` or `env/sycl.sh`. That changes the toolchain
+for **every backend on that stack**, so rebuild everything and treat the whole
+results tree as a separate experiment:
+
+```bash
+GPU_BENCH_RESULTS_ROOT=results-mpi-2.21 \
+  cluster/harness/launch.sh --all allreduce
+```
+
+This is not a per-measurement knob. If you want an A/B, give the library the
+Recipe A treatment instead: add a `deps/<lib>.sh` and one
+`gpu_bench_select_variant <lib>` call in `layout.sh`. Build tree, results tree
+and `--explain` output already follow from `GPU_BENCH_VARIANT_TAG`.
+
+## ▶️ Run
 
 Set a Slurm account if your Leonardo user has no site default:
 
@@ -115,14 +211,14 @@ Submit every benchmark with `make submit` or
 submission. The [harness guide](../harness/README.md) documents filters,
 overrides, output paths, and profiling.
 
-## Leonardo Layout
+## 🗂️ Leonardo Layout
 
 | Path | Responsibility |
 | --- | --- |
 | `cluster.sh` | Interface used by the shared harness |
 | `backends.sh` | Backend, launcher, preset, and binary registry |
 | `slurm.sh` | Partition and optional account settings |
-| `layout.sh` | Dependency source and installation prefixes |
+| `layout.sh` | Dependency source and installation prefixes, library version selection |
 | `env/` | Build toolchains and modules |
 | `runtime/` | UCX, UCC, NCCL, NVSHMEM, MPI, and oneCCL settings |
 | `deps/` | Third-party dependency build targets |

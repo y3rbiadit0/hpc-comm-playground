@@ -5,9 +5,7 @@
 # whose data plane is Open MPI + UCX. The two oneCCL runtimes do NOT source this:
 # oneCCL has its own transport and none of these apply.
 #
-# This exists because the shared placement and transport settings previously
-# drifted across four runtime files. Experiment definitions may override a
-# setting before this baseline is sourced.
+# Experiment definitions may override a setting before this baseline is sourced.
 #
 # Leading underscore marks a non-runtime file, matching deps/_lib.sh; the backend
 # registry never resolves a runtime name starting with one.

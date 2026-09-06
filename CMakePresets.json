@@ -10,7 +10,7 @@
       "name": "base",
       "hidden": true,
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/${presetName}",
+      "binaryDir": "${sourceDir}/build$env{GPU_BENCH_VARIANT_TAG}/${presetName}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
@@ -84,7 +84,8 @@
         "MPI_CXX_COMPILER": "mpicxx",
         "NVSHMEM_INCLUDE_DIR": "$env{NVSHMEM_HOME}/include",
         "NVSHMEM_LIBRARY_PATH": "$env{NVSHMEM_HOME}/lib",
-        "NVSHMEM_LIBRARY": "$env{NVSHMEM_HOME}/lib/libnvshmem_host.so;$env{NVSHMEM_HOME}/lib/libnvshmem_device.a"
+        "NVSHMEM_HOST_LIBRARY": "$env{NVSHMEM_HOME}/lib/libnvshmem_host.so",
+        "NVSHMEM_DEVICE_LIBRARY": "$env{NVSHMEM_HOME}/lib/libnvshmem_device.a"
       }
     },
     {

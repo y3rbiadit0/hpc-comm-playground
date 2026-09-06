@@ -26,11 +26,18 @@ CG vector updates, residual calculation, or convergence testing.
 ## Command-line contract
 
 ```text
-<grid_side> [iterations] [warmup]
+<max_grid_side> [iterations] [warmup] [comma-separated grid sides]
 ```
 
 All arguments must be positive. The validated experiment configurations use a
 grid side at least as large as the rank count so every rank owns grid columns.
+
+Without the fourth argument the benchmark measures the single grid
+`max_grid_side` names. Given a list, it measures each side in turn and emits one
+record per side; every side must be no larger than `max_grid_side`, which sizes
+the one allocation the sweep reuses. The default is a single size rather than a
+power-of-two sweep because the side sets each rank's column count: sweeping it by
+default would change what a bare invocation measures.
 
 Harness defaults, valid topologies, and environment overrides are documented in
 the [experiment operations](../../cluster/harness/experiments/cg_step/README.md).
@@ -48,6 +55,25 @@ summary statistics are calculated from that globally reduced series:
 ```text
 global_sample[i] = max(local_sample[rank][i])
 ```
+
+## Phase Breakdown
+
+With `GPU_BENCH_CG_PHASES=1` the benchmark runs a second pass that times the four
+phases of the step separately -- pack, halo exchange, compute (unpack, stencil,
+both local dot products), and the two global reductions -- and reports them as
+`phase_*_usec` fields beside the headline number.
+
+It is a separate pass because separating the phases means synchronizing the
+device at every boundary, which both adds cost and removes overlap the unsplit
+step may exploit. The reported `usec` still comes from the unsplit loop and stays
+comparable with results measured before the breakdown existed; the phase figures
+are their own, more synchronized measurement. Their sum is reported as
+`phase_sum_usec`, and the gap between that sum and `usec` is how much the phases
+overlapped.
+
+The pass roughly doubles the benchmark's run time, so it is off by default and
+wanted only when decomposing a result -- for instance when checking whether the
+`halo_1d` and `allreduce` microbenchmarks predict the application.
 
 ## Validation
 

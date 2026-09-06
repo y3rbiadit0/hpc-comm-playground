@@ -9,7 +9,15 @@ from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 
 from ._mpl import plt
 from .data import Sweep, format_bytes, is_single_rank, topology_key, write_table
-from .theme import BACKEND_ORDER, BASELINE_BACKEND, colour_for, figure_legend, style_axes
+from .theme import (
+    BACKEND_ORDER,
+    BASELINE_BACKEND,
+    PHASE_ORDER,
+    colour_for,
+    figure_legend,
+    phase_colour,
+    style_axes,
+)
 
 
 def panel_title(case: str, topology: str) -> str:
@@ -530,6 +538,124 @@ def draw_distribution(
 # modes), so they take the leading palette slots -- the only three validated for
 # all-pairs separation rather than just adjacent pairs.
 CASE_SLOTS = (0, 1, 2, 3)
+
+
+def draw_phases(
+    sweep: Sweep, theme: dict, outdir: Path, stem: str, ext: str, requested_size: str = "max"
+) -> tuple[Path, int] | None:
+    """Where one step's time goes, stacked by phase, one panel per topology.
+
+    Only cg_step carries a breakdown, and only when measured with
+    GPU_BENCH_CG_PHASES=1, so this returns None rather than an empty figure when
+    no point has one.
+
+    The bars total the phase sum, which is the step's cost with no overlap. The
+    reported per-iteration time is marked separately: the gap between the two is
+    how much the unsplit loop overlaps its phases, and it is the reason the
+    breakdown is measured in its own pass rather than in the reported loop.
+    """
+    size = select_size(sweep, requested_size)
+    if size is None:
+        return None
+
+    panels = []
+    for (case, topology), backends in sweep.curves.items():
+        entries = []
+        for backend in (b for b in sweep.backends() if b in backends):
+            point = next(
+                (p for p in backends[backend] if p["bytes"] == size and p.get("phases")), None
+            )
+            if point is not None:
+                entries.append((backend, point))
+        if entries:
+            panels.append((case, topology, entries))
+    if not panels:
+        return None
+    panels.sort(key=lambda item: (item[0], topology_key(item[1])))
+
+    # Wider than the other figures' panels: the bars carry backend names on the
+    # y axis and the legend has five entries, which clip at the default width.
+    fig, axes = panel_grid(
+        1,
+        len(panels),
+        width=5.2,
+        height=0.55 * max(len(entry[2]) for entry in panels) + 1.8,
+    )
+    handles: dict[str, object] = {}
+    for column, (case, topology, entries) in enumerate(panels):
+        ax = axes[0][column]
+        labels = [backend for backend, _ in entries]
+        positions = list(range(len(entries)))
+        left = [0.0] * len(entries)
+        for phase in PHASE_ORDER:
+            widths = [point["phases"].get(phase) or 0.0 for _, point in entries]
+            bars = ax.barh(
+                positions,
+                widths,
+                left=left,
+                height=0.62,
+                color=phase_colour(phase, theme),
+                # A hairline in the surface colour separates adjacent segments
+                # so a thin phase never merges into its neighbour.
+                edgecolor=theme["surface"],
+                linewidth=1.0,
+            )
+            handles.setdefault(phase, bars[0])
+            left = [value + width for value, width in zip(left, widths, strict=True)]
+
+        reported = [point.get("value_mean") for _, point in entries]
+        marks = [
+            (pos, value)
+            for pos, value in zip(positions, reported, strict=True)
+            if value is not None
+        ]
+        if marks:
+            mark = ax.scatter(
+                [value for _, value in marks],
+                [pos for pos, _ in marks],
+                marker="|",
+                s=260,
+                linewidths=2.0,
+                color=theme["text"],
+                zorder=3,
+            )
+            handles.setdefault("reported", mark)
+
+        ax.set_yticks(positions, labels, fontsize=8)
+        ax.invert_yaxis()
+        ax.set_xlabel(f"time per iteration ({sweep.unit})")
+        ax.set_title(panel_title(case, topology))
+        ax.grid(True, axis="x")
+        ax.grid(False, axis="y")
+        style_axes(ax, theme)
+
+    # The bars total the no-overlap cost; the tick marks where the unsplit
+    # loop actually landed, so the gap between them is the overlap.
+    fig.suptitle(f"cg_step phase breakdown at {format_bytes(size)}")
+    figure_legend(fig, list(handles.values()), list(handles.keys()), theme)
+    outdir.mkdir(parents=True, exist_ok=True)
+    path = outdir / f"{stem}.{ext}"
+    fig.savefig(path)
+    plt.close(fig)
+
+    write_table(
+        outdir / f"{stem}.csv",
+        ["case", "topology", "backend", "bytes", *PHASE_ORDER, "sum", "reported"],
+        [
+            [
+                case,
+                topology,
+                backend,
+                size,
+                *[point["phases"].get(phase) for phase in PHASE_ORDER],
+                point["phases"].get("total"),
+                point.get("value_mean"),
+            ]
+            for case, topology, entries in panels
+            for backend, point in entries
+        ],
+    )
+    return path, size
 
 
 def short_case(case: str) -> str:

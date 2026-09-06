@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include "benchmarks/cg_phases.hpp"
 #include "report.hpp"
 #include "stats/collective.hpp"
 #include "stats/summary.hpp"
@@ -126,6 +127,52 @@ void test_report_contains_build_provenance() {
           "report omitted the source revision");
 }
 
+void test_cg_phases_run_every_phase_in_order() {
+  std::vector<std::string> order;
+  int syncs = 0;
+  const auto samples = gpu_bench::measure_cg_phases(
+      1, 2, [&]() { ++syncs; }, [&]() { order.push_back("pack"); },
+      [&]() { order.push_back("halo"); }, [&]() { order.push_back("compute"); },
+      [&]() { order.push_back("reduce"); });
+
+  // One warmup step plus two timed ones, each running all four phases in order.
+  const std::vector<std::string> expected = {"pack", "halo", "compute", "reduce",
+                                             "pack", "halo", "compute", "reduce",
+                                             "pack", "halo", "compute", "reduce"};
+  require(order == expected, "phases did not run once each, in order, per step");
+  // Warmup is untimed, so it must not synchronize: 2 steps x 4 phases.
+  require(syncs == 8, "phase timing synchronized outside the timed phases");
+  for (int phase = 0; phase < gpu_bench::cg_phase_count; ++phase) {
+    require(samples[phase].size() == 2, "a phase recorded the wrong sample count");
+  }
+
+  bool rejected = false;
+  try {
+    gpu_bench::measure_cg_phases(
+        0, 0, []() {}, []() {}, []() {}, []() {}, []() {});
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "measure_cg_phases accepted a non-positive iteration count");
+}
+
+void test_cg_phase_fields_report_each_phase_and_their_sum() {
+  gpu_bench::cg_phase_stats phases;
+  phases[gpu_bench::cg_phase_pack] = gpu_bench::summarize({1.0e-6});
+  phases[gpu_bench::cg_phase_halo] = gpu_bench::summarize({2.0e-6});
+  phases[gpu_bench::cg_phase_compute] = gpu_bench::summarize({3.0e-6});
+  phases[gpu_bench::cg_phase_reduce] = gpu_bench::summarize({4.0e-6});
+
+  const auto fields = gpu_bench::cg_phase_fields(phases);
+  require(fields.find("phase_pack_usec=1") != std::string::npos, "pack phase missing");
+  require(fields.find("phase_halo_usec=2") != std::string::npos, "halo phase missing");
+  require(fields.find("phase_compute_usec=3") != std::string::npos, "compute phase missing");
+  require(fields.find("phase_reduce_usec=4") != std::string::npos, "reduce phase missing");
+  // The sum is reported so a reader compares against the headline without
+  // adding the four fields by hand.
+  require(fields.find("phase_sum_usec=10") != std::string::npos, "phase sum missing or wrong");
+}
+
 }  // namespace
 
 int main() {
@@ -134,5 +181,7 @@ int main() {
   test_batched_timing_amortizes_completed_operations();
   test_isolated_case_gets_its_own_sample_count();
   test_report_contains_build_provenance();
+  test_cg_phases_run_every_phase_in_order();
+  test_cg_phase_fields_report_each_phase_and_their_sum();
   return 0;
 }

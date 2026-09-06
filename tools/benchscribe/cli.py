@@ -7,12 +7,16 @@ from pathlib import Path
 from characterize import characterize
 from model import MetricName, OutputFormat
 from render import (
+    phase_rows,
     render_csv,
     render_fit_csv,
     render_fit_json,
     render_fit_markdown,
     render_json,
     render_markdown,
+    render_phase_csv,
+    render_phase_json,
+    render_phase_markdown,
 )
 from scan import scan_results
 from summary import SummaryTable
@@ -47,7 +51,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="report per-backend latency floor (α), peak bandwidth (B∞), and n½ = α·B∞ across the sweep",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--phases",
+        action="store_true",
+        help="report cg_step's per-phase breakdown and the overlap it implies "
+        "(needs results measured with GPU_BENCH_CG_PHASES=1)",
+    )
+    args = parser.parse_args(argv)
+    if args.fit and args.phases:
+        parser.error("--fit and --phases report different views; pick one")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,6 +81,21 @@ def main(argv: list[str] | None = None) -> int:
 
     metric_override = MetricName(args.metric) if args.metric else None
     table = SummaryTable.from_measurements(measurements, metric_override=metric_override)
+    if args.phases:
+        if not phase_rows(table):
+            print(
+                "error: no result carries a phase breakdown. Re-run with "
+                "GPU_BENCH_CG_PHASES=1 to record one.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.format == OutputFormat.JSON.value:
+            render_phase_json(table, sys.stdout)
+        elif args.format == OutputFormat.CSV.value:
+            render_phase_csv(table, sys.stdout)
+        else:
+            render_phase_markdown(table, sys.stdout)
+        return 0
     if args.fit:
         chars = characterize(table)
         if args.format == OutputFormat.JSON.value:

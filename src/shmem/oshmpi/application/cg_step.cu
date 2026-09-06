@@ -21,6 +21,7 @@
 #include "oshmpi_space.h"
 #include "partition.hpp"
 #include "report.hpp"
+#include "benchmarks/cg_phases.hpp"
 #include "benchmarks/cg_step.hpp"
 #include "timing.hpp"
 #include "validation.hpp"
@@ -33,7 +34,7 @@ void check_cuda(cudaError_t status, const char* call) {
   }
 }
 
-// CG iteration communication skeleton (see src/mpi/cuda/cg_step.cu). The halo
+// CG iteration communication skeleton (see src/mpi/cuda/application/cg_step.cu). The halo
 // columns use the OSHMPI CUDA symmetric space; the two reductions run on the host
 // symmetric heap (local dot computed on the GPU then reduced), the OSHMPI model.
 
@@ -119,9 +120,10 @@ enum class reduce_memory { device, staged };
  *
  * `device` keeps them on the GPU, as the other five backends do:
  * partial, result and pWrk all come from the OSHMPI CUDA space, so
- * shmem_double_sum_to_all is issued on device pointers. This needs UCC
- * (cluster/leonardo/experiments/cg_step/common.sh enables it for this runtime);
- * without it the reduction reaches a host Open MPI op and segfaults.
+ * shmem_double_sum_to_all is issued on device pointers. This needs UCC, which
+ * cluster/harness/experiments/cg_step/common.sh turns OFF by default -- so
+ * `device` refuses to start unless OMPI_MCA_coll_ucc_enable=1 is set with it.
+ * Without UCC the reduction reaches a host Open MPI op and segfaults.
  *
  * `staged` (default) copies the two doubles device->host and reduces in the
  * default symmetric heap. At 8 bytes that is actually faster, but it is not
@@ -171,12 +173,11 @@ int main(int argc, char** argv) {
       }
     }
 
-    const auto side = gpu_bench::parse_size_arg(argc, argv, 1U << 9U);
+    const auto max_side = gpu_bench::parse_size_arg(argc, argv, 1U << 9U);
     const auto iterations = gpu_bench::parse_positive_int_arg(argc, argv, 2, 50);
     const auto warmup = gpu_bench::parse_positive_int_arg(argc, argv, 3, 10);
-    const auto local_cols = gpu_bench::local_count(side, pe, pes);
-    const auto col_offset = gpu_bench::local_offset(side, pe, pes);
-    const auto width = local_cols + 2U;
+    const auto sides = gpu_bench::parse_size_list_or_single(argc, argv, 4, max_side);
+    const bool phase_pass = gpu_bench::cg_phases_requested();
     const int left = pe == 0 ? -1 : pe - 1;
     const int right = pe + 1 == pes ? -1 : pe + 1;
 
@@ -187,7 +188,12 @@ int main(int argc, char** argv) {
     }
     check_cuda(cudaSetDevice(pe % device_count), "cudaSetDevice");
 
-    const auto symmetric_bytes = std::max<std::size_t>(8U * side * sizeof(float), 1U << 20U);
+    // One allocation for the largest side in the sweep; smaller sides use a
+    // prefix of it. Symmetric allocation is collective, so every PE must size
+    // from max_side rather than from its own slab.
+    const auto max_field_elems = max_side * (gpu_bench::local_count(max_side, pe, pes) + 2U);
+
+    const auto symmetric_bytes = std::max<std::size_t>(8U * max_side * sizeof(float), 1U << 20U);
     space = gpu_bench_oshmpi_space_create(symmetric_bytes);
     if (space == nullptr) {
       throw std::runtime_error("failed to create OSHMPI CUDA memory space");
@@ -196,12 +202,12 @@ int main(int argc, char** argv) {
     float* q_field = nullptr;
     double* partial_pq = nullptr;
     double* partial_qq = nullptr;
-    check_cuda(cudaMalloc(reinterpret_cast<void**>(&p_field), side * width * sizeof(float)), "cudaMalloc(p)");
-    check_cuda(cudaMalloc(reinterpret_cast<void**>(&q_field), side * width * sizeof(float)), "cudaMalloc(q)");
-    auto* send_west = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, side * sizeof(float)));
-    auto* send_east = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, side * sizeof(float)));
-    auto* recv_west = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, side * sizeof(float)));
-    auto* recv_east = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, side * sizeof(float)));
+    check_cuda(cudaMalloc(reinterpret_cast<void**>(&p_field), max_field_elems * sizeof(float)), "cudaMalloc(p)");
+    check_cuda(cudaMalloc(reinterpret_cast<void**>(&q_field), max_field_elems * sizeof(float)), "cudaMalloc(q)");
+    auto* send_west = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, max_side * sizeof(float)));
+    auto* send_east = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, max_side * sizeof(float)));
+    auto* recv_west = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, max_side * sizeof(float)));
+    auto* recv_east = static_cast<float*>(gpu_bench_oshmpi_space_malloc(space, max_side * sizeof(float)));
 
     // In device mode the reduction operands must be symmetric *device* memory,
     // so partial/result/pWrk come from the CUDA space and the dot kernel writes
@@ -245,112 +251,177 @@ int main(int argc, char** argv) {
       psync_qq[i] = SHMEM_SYNC_VALUE;
     }
 
-    check_cuda(cudaMemset(p_field, 0, side * width * sizeof(float)), "cudaMemset(p)");
-    check_cuda(cudaMemset(q_field, 0, side * width * sizeof(float)), "cudaMemset(q)");
-    check_cuda(cudaMemset(recv_west, 0, side * sizeof(float)), "cudaMemset(recv_west)");
-    check_cuda(cudaMemset(recv_east, 0, side * sizeof(float)), "cudaMemset(recv_east)");
+    const auto sync = [&]() { check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize(phase)"); };
 
-    const dim3 block2d(16, 16);
-    const dim3 grid2d(static_cast<unsigned>((local_cols + block2d.x - 1U) / block2d.x),
-                      static_cast<unsigned>((side + block2d.y - 1U) / block2d.y));
-    constexpr int block1d = 256;
-    const auto grid1d = static_cast<int>((side + block1d - 1) / block1d);
-    const auto dot_grid =
-        static_cast<int>(std::min<std::size_t>((side * local_cols + 255U) / 256U, 4096U));
+    int all_sides_ok = 1;
+    for (const std::size_t side : sides) {
+      const auto local_cols = gpu_bench::local_count(side, pe, pes);
+      const auto col_offset = gpu_bench::local_offset(side, pe, pes);
+      const auto width = local_cols + 2U;
+      const auto field_elems = side * width;
 
-    if (local_cols > 0) {
-      init_p_kernel<<<grid2d, block2d>>>(p_field, side, local_cols, width);
-      check_cuda(cudaGetLastError(), "init_p_kernel");
-    }
-    check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize(init)");
-    shmem_barrier_all();
+      check_cuda(cudaMemset(p_field, 0, field_elems * sizeof(float)), "cudaMemset(p)");
+      check_cuda(cudaMemset(q_field, 0, field_elems * sizeof(float)), "cudaMemset(q)");
+      check_cuda(cudaMemset(recv_west, 0, side * sizeof(float)), "cudaMemset(recv_west)");
+      check_cuda(cudaMemset(recv_east, 0, side * sizeof(float)), "cudaMemset(recv_east)");
 
-    const auto stats = gpu_bench::run_benchmark(warmup, iterations, [&]() {
+      const dim3 block2d(16, 16);
+      const dim3 grid2d(static_cast<unsigned>((local_cols + block2d.x - 1U) / block2d.x),
+                        static_cast<unsigned>((side + block2d.y - 1U) / block2d.y));
+      constexpr int block1d = 256;
+      const auto grid1d = static_cast<int>((side + block1d - 1) / block1d);
+      const auto dot_grid =
+          static_cast<int>(std::min<std::size_t>((side * local_cols + 255U) / 256U, 4096U));
+
       if (local_cols > 0) {
-        pack_column_kernel<<<grid1d, block1d>>>(p_field, send_west, side, width, 1U);
-        pack_column_kernel<<<grid1d, block1d>>>(p_field, send_east, side, width, local_cols);
-        check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize(pack)");
+        init_p_kernel<<<grid2d, block2d>>>(p_field, side, local_cols, width);
+        check_cuda(cudaGetLastError(), "init_p_kernel");
       }
-      if (left >= 0) {
-        shmem_putmem(recv_east, send_west, side * sizeof(float), left);
-      }
-      if (right >= 0) {
-        shmem_putmem(recv_west, send_east, side * sizeof(float), right);
-      }
-      shmem_quiet();
+      check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize(init)");
       shmem_barrier_all();
-      check_cuda(cudaMemset(partial_pq, 0, sizeof(double)), "cudaMemset(partial_pq)");
-      check_cuda(cudaMemset(partial_qq, 0, sizeof(double)), "cudaMemset(partial_qq)");
-      if (local_cols > 0) {
-        unpack_column_kernel<<<grid1d, block1d>>>(p_field, recv_west, side, width, 0U);
-        unpack_column_kernel<<<grid1d, block1d>>>(p_field, recv_east, side, width, local_cols + 1U);
-        spmv_kernel<<<grid2d, block2d>>>(p_field, q_field, side, local_cols, width);
-        cg_dot_kernel<<<dot_grid, block1d>>>(p_field, q_field, partial_pq, partial_qq, side, local_cols, width);
-      }
-      // Two separate global reductions, as a real CG iteration performs.
-      if (reduce_mode == reduce_memory::device) {
-        // Operands stay on the GPU, matching the other five backends.
+
+      /* The step, split into the four phases the analysis decomposes it into.
+       * Composing them is exactly the step this benchmark has always timed: the
+       * pack and compute phases already synchronized before the puts and the
+       * reduction could read their output, so the split adds no synchronization
+       * to the headline loop - only the phase pass adds any. */
+      const auto pack = [&]() {
+        if (local_cols > 0) {
+          pack_column_kernel<<<grid1d, block1d>>>(p_field, send_west, side, width, 1U);
+          pack_column_kernel<<<grid1d, block1d>>>(p_field, send_east, side, width, local_cols);
+          check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize(pack)");
+        }
+      };
+      const auto halo = [&]() {
+        if (left >= 0) {
+          shmem_putmem(recv_east, send_west, side * sizeof(float), left);
+        }
+        if (right >= 0) {
+          shmem_putmem(recv_west, send_east, side * sizeof(float), right);
+        }
+        shmem_quiet();
+        shmem_barrier_all();
+      };
+      const auto compute = [&]() {
+        check_cuda(cudaMemset(partial_pq, 0, sizeof(double)), "cudaMemset(partial_pq)");
+        check_cuda(cudaMemset(partial_qq, 0, sizeof(double)), "cudaMemset(partial_qq)");
+        if (local_cols > 0) {
+          unpack_column_kernel<<<grid1d, block1d>>>(p_field, recv_west, side, width, 0U);
+          unpack_column_kernel<<<grid1d, block1d>>>(p_field, recv_east, side, width, local_cols + 1U);
+          spmv_kernel<<<grid2d, block2d>>>(p_field, q_field, side, local_cols, width);
+          cg_dot_kernel<<<dot_grid, block1d>>>(p_field, q_field, partial_pq, partial_qq, side, local_cols, width);
+        }
+        // The reduction reads the dot kernel's output, so the partials must have
+        // landed. In staged mode the device-to-host copy below would serialize
+        // anyway; making it explicit keeps the phase boundary honest in both.
         check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize(dot)");
-        shmem_double_sum_to_all(&result[0], partial_pq, 1, 0, 0, pes, pwrk_pq, psync_pq);
-        shmem_double_sum_to_all(&result[1], partial_qq, 1, 0, 0, pes, pwrk_qq, psync_qq);
-      } else {
-        check_cuda(cudaMemcpy(&source[0], partial_pq, sizeof(double), cudaMemcpyDeviceToHost),
-                   "cudaMemcpy(pq)");
-        check_cuda(cudaMemcpy(&source[1], partial_qq, sizeof(double), cudaMemcpyDeviceToHost),
-                   "cudaMemcpy(qq)");
-        shmem_double_sum_to_all(&result[0], &source[0], 1, 0, 0, pes, pwrk_pq, psync_pq);
-        shmem_double_sum_to_all(&result[1], &source[1], 1, 0, 0, pes, pwrk_qq, psync_qq);
-      }
-    });
-    const auto global = gpu_bench::collective_stats(stats, sample_gather, pe, pes);
+      };
+      // Two separate global reductions, as a real CG iteration performs.
+      const auto reduce = [&]() {
+        if (reduce_mode == reduce_memory::device) {
+          // Operands stay on the GPU, matching the other five backends.
+          shmem_double_sum_to_all(&result[0], partial_pq, 1, 0, 0, pes, pwrk_pq, psync_pq);
+          shmem_double_sum_to_all(&result[1], partial_qq, 1, 0, 0, pes, pwrk_qq, psync_qq);
+        } else {
+          check_cuda(cudaMemcpy(&source[0], partial_pq, sizeof(double), cudaMemcpyDeviceToHost),
+                     "cudaMemcpy(pq)");
+          check_cuda(cudaMemcpy(&source[1], partial_qq, sizeof(double), cudaMemcpyDeviceToHost),
+                     "cudaMemcpy(qq)");
+          shmem_double_sum_to_all(&result[0], &source[0], 1, 0, 0, pes, pwrk_pq, psync_pq);
+          shmem_double_sum_to_all(&result[1], &source[1], 1, 0, 0, pes, pwrk_qq, psync_qq);
+        }
+      };
 
-    const auto ones = [](std::size_t, std::size_t) { return 1.0F; };
-    const auto qval = [&](std::size_t i, std::size_t jg) { return gpu_bench::stencil5(i, jg, side, ones); };
-    double ref_pq = 0.0;
-    double ref_qq = 0.0;
-    for (std::size_t i = 0; i < side; ++i) {
-      for (std::size_t jg = 0; jg < side; ++jg) {
-        const double q = qval(i, jg);
-        ref_pq += q;
-        ref_qq += q * q;
-      }
-    }
-    double final_pq = 0.0;
-    double final_qq = 0.0;
-    if (reduce_mode == reduce_memory::device) {
-      double host_result[2] = {0.0, 0.0};
-      check_cuda(cudaMemcpy(host_result, result, 2U * sizeof(double), cudaMemcpyDeviceToHost),
-                 "cudaMemcpy(result)");
-      final_pq = host_result[0];
-      final_qq = host_result[1];
-    } else {
-      final_pq = result[0];
-      final_qq = result[1];
-    }
-    int local_ok =
-        gpu_bench::nearly_equal(final_pq, ref_pq) && gpu_bench::nearly_equal(final_qq, ref_qq) ? 1 : 0;
-    if (local_cols > 0) {
-      std::vector<float> host_q(side * width);
-      check_cuda(cudaMemcpy(host_q.data(), q_field, side * width * sizeof(float), cudaMemcpyDeviceToHost),
-                 "cudaMemcpy(q)");
-      if (!gpu_bench::validate_columns(host_q.data(), side, local_cols, width, col_offset, qval)) {
-        local_ok = 0;
-      }
-    }
+      const auto stats = gpu_bench::run_benchmark(warmup, iterations, [&]() {
+        pack();
+        halo();
+        compute();
+        reduce();
+      });
+      const auto global = gpu_bench::collective_stats(stats, sample_gather, pe, pes);
 
-    const double local_value = static_cast<double>(local_ok);
-    shmem_putmem(ok_by_pe + pe, &local_value, sizeof(double), 0);
-    shmem_quiet();
-    shmem_barrier_all();
-
-    int global_ok = local_ok;
-    if (pe == 0) {
-      global_ok = 1;
-      for (int source_pe = 0; source_pe < pes; ++source_pe) {
-        if (ok_by_pe[source_pe] < 0.5) {
-          global_ok = 0;
+      gpu_bench::cg_phase_stats phase_global;
+      if (phase_pass) {
+        shmem_barrier_all();
+        const auto phase_samples =
+            gpu_bench::measure_cg_phases(warmup, iterations, sync, pack, halo, compute, reduce);
+        for (int phase = 0; phase < gpu_bench::cg_phase_count; ++phase) {
+          phase_global[phase] = gpu_bench::collective_stats(gpu_bench::summarize(phase_samples[phase]),
+                                                            sample_gather, pe, pes);
         }
       }
+
+      const auto ones = [](std::size_t, std::size_t) { return 1.0F; };
+      const auto qval = [&](std::size_t i, std::size_t jg) { return gpu_bench::stencil5(i, jg, side, ones); };
+      double ref_pq = 0.0;
+      double ref_qq = 0.0;
+      for (std::size_t i = 0; i < side; ++i) {
+        for (std::size_t jg = 0; jg < side; ++jg) {
+          const double q = qval(i, jg);
+          ref_pq += q;
+          ref_qq += q * q;
+        }
+      }
+      double final_pq = 0.0;
+      double final_qq = 0.0;
+      if (reduce_mode == reduce_memory::device) {
+        double host_result[2] = {0.0, 0.0};
+        check_cuda(cudaMemcpy(host_result, result, 2U * sizeof(double), cudaMemcpyDeviceToHost),
+                   "cudaMemcpy(result)");
+        final_pq = host_result[0];
+        final_qq = host_result[1];
+      } else {
+        final_pq = result[0];
+        final_qq = result[1];
+      }
+      int local_ok =
+          gpu_bench::nearly_equal(final_pq, ref_pq) && gpu_bench::nearly_equal(final_qq, ref_qq) ? 1 : 0;
+      if (local_cols > 0) {
+        std::vector<float> host_q(field_elems);
+        check_cuda(cudaMemcpy(host_q.data(), q_field, field_elems * sizeof(float), cudaMemcpyDeviceToHost),
+                   "cudaMemcpy(q)");
+        if (!gpu_bench::validate_columns(host_q.data(), side, local_cols, width, col_offset, qval)) {
+          local_ok = 0;
+        }
+      }
+
+      const double local_value = static_cast<double>(local_ok);
+      shmem_putmem(ok_by_pe + pe, &local_value, sizeof(double), 0);
+      shmem_quiet();
+      shmem_barrier_all();
+
+      int global_ok = local_ok;
+      if (pe == 0) {
+        global_ok = 1;
+        for (int source_pe = 0; source_pe < pes; ++source_pe) {
+          if (ok_by_pe[source_pe] < 0.5) {
+            global_ok = 0;
+          }
+        }
+      }
+      all_sides_ok = all_sides_ok && global_ok;
+
+      if (pe == 0) {
+        gpu_bench::bench_report report;
+        report.name = "oshmpi_cg_step";
+        report.n = side;
+        report.ranks = pes;
+        report.bytes_per_iter = 2U * side * sizeof(float);
+        report.iterations = iterations;
+        report.warmup = warmup;
+        report.time_per_iter_s = global.avg_s;
+        report.min_s = global.min_s;
+        report.max_s = global.max_s;
+        gpu_bench::set_distribution(report, global);
+        report.valid = global_ok != 0;
+        report.extra = std::string("reduce_mem=") +
+                       (reduce_mode == reduce_memory::device ? "device_symmetric" : "host_staged");
+        if (phase_pass) {
+          report.extra += ' ' + gpu_bench::cg_phase_fields(phase_global);
+        }
+        gpu_bench::print_report(report);
+      }
+      shmem_barrier_all();
     }
 
     check_cuda(cudaFree(q_field), "cudaFree(q)");
@@ -380,26 +451,8 @@ int main(int argc, char** argv) {
     shmem_free(send_west);
     gpu_bench_oshmpi_space_destroy(space);
 
-    if (pe == 0) {
-      gpu_bench::bench_report report;
-      report.name = "oshmpi_cg_step";
-      report.n = side;
-      report.ranks = pes;
-      report.bytes_per_iter = 2U * side * sizeof(float);
-      report.iterations = iterations;
-      report.warmup = warmup;
-      report.time_per_iter_s = global.avg_s;
-      report.min_s = global.min_s;
-      report.max_s = global.max_s;
-      gpu_bench::set_distribution(report, global);
-      report.valid = global_ok != 0;
-      report.extra = std::string("reduce_mem=") +
-                     (reduce_mode == reduce_memory::device ? "device_symmetric" : "host_staged");
-      gpu_bench::print_report(report);
-    }
-
     shmem_finalize();
-    return global_ok ? 0 : 1;
+    return all_sides_ok ? 0 : 1;
   } catch (const std::exception& error) {
     std::cerr << "PE " << pe << ": " << error.what() << '\n';
     // Space cleanup is collective and is unsafe when another PE may still be

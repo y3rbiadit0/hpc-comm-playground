@@ -12,8 +12,8 @@ set -euo pipefail
 #   gpu_bench_experiment_extra_summary  optional; extra summary lines
 #   gpu_bench_experiment_launch_prefix  optional override; echoes a per-rank command
 #                                prefix spliced in front of the binary (e.g. nsys)
-#   cp_<name>_main             wrapper around gpu_bench_experiment_main, called by the
-#                              sbatch job scripts
+#   gpu_bench_<name>_main      wrapper around gpu_bench_experiment_main, called
+#                              by cluster/harness/job.sh
 
 # Opt-in per-rank profiling, shared by all experiments. GPU_BENCH_PROFILE=nsys wraps
 # each rank in Nsight Systems (timeline: kernels, comm calls, overlap);
@@ -81,7 +81,6 @@ gpu_bench_experiment_setup() {
   export LC_ALL=C
   export GPU_BENCH_JOB_NODES="$GPU_BENCH_NODES"
 
-  # The machine, reached only through its cluster.sh -- see cluster/harness/job.sh.
   gpu_bench_cluster_environment "$GPU_BENCH_STACK"
   gpu_bench_cluster_runtime "$GPU_BENCH_RUNTIME"
 

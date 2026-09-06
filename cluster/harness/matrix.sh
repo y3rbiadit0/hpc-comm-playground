@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Which (benchmark, backend, topology) combinations are valid.
 #
-# This used to live implicitly in which directories happened to exist, where it
-# was invisible to review: that pingpong has no 4-rank case, or that halo_1d has
-# no single-rank case, could only be discovered by listing the tree. Declared
-# here, adding a topology is a one-line edit instead of generating 64 files.
+# Declared rather than inferred from which directories exist, so an exclusion --
+# pingpong has no 4-rank case, halo_1d no single-rank case -- is reviewable.
 #
 # Both lists are ordered: smallest topology first, so submissions go out in an
 # order where a cheap job fails before an expensive one does.

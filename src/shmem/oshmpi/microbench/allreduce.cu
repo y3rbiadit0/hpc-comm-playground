@@ -103,8 +103,6 @@ int main(int argc, char** argv) {
 
   try {
     const auto mode = parse_reduce_memory();
-    // Refusing beats segfaulting: without UCC the reduction reaches a host op
-    // that cannot read device memory, and the crash gives no usable diagnosis.
     if (mode == reduce_memory::device) {
       const char* ucc = std::getenv("OMPI_MCA_coll_ucc_enable");
       if (ucc != nullptr && std::strcmp(ucc, "0") == 0) {

@@ -12,10 +12,10 @@ if(NOT NCCL_INCLUDE_DIR OR NOT NCCL_LIBRARY)
   message(FATAL_ERROR "NCCL not found. Set NCCL_INCLUDE_DIR/NCCL_LIBRARY or NCCL_HOME")
 endif()
 
-# Binaries stay in this directory rather than in the tier subdirectories: the
-# experiment job scripts under cluster/leonardo/experiments hardcode
-# build/<preset>/src/xccl/cuda/<target>, and the source layout is a reading aid, not
-# a deployment contract.
+# Binaries land here, not in the microbench/ and application/ subdirectories:
+# cluster/harness/job.sh resolves one path per backend from the registry in
+# cluster/<cluster>/backends.sh. The source layout is a reading aid; the flat
+# output directory is the contract.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Two tiers, see README "Benchmarks".

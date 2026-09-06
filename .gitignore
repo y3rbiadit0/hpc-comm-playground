@@ -1,5 +1,5 @@
 # Build artifacts
-/build/
+/build*/
 /CMakeFiles/
 /CMakeCache.txt
 /cmake_install.cmake
@@ -13,11 +13,10 @@
 
 # Benchmark and profiler output
 /logs/
-/results/
-/docs/data-backup/
-/docs/analysis/data/**/figures/
-/docs/analysis/data/**/points.json
-/docs/analysis/data/**/fit.json
+/results*/
+/docs/analysis/
+*.points.json
+*.fit.json
 *.log
 *.err
 *.out
@@ -44,3 +43,4 @@ dist/
 .vscode/
 *~
 *.swp
+

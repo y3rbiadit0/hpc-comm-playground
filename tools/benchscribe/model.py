@@ -120,6 +120,36 @@ class AcrossRuns:
     stddev: float | None = None
 
 
+# The phases of one cg_step iteration, in execution order. Kept as a tuple so
+# the reported order is the order the work happens in, not alphabetical.
+CG_PHASE_NAMES = ("pack", "halo", "compute", "reduce")
+
+
+@dataclass(frozen=True)
+class PhaseBreakdown:
+    """Mean microseconds in each phase of one step, averaged over trials.
+
+    From `cg_step`'s opt-in second pass (`GPU_BENCH_CG_PHASES=1`), which
+    synchronizes between phases. `total` is the benchmark's own
+    `phase_sum_usec`: what the step would cost with no overlap between phases,
+    so it exceeds the reported per-iteration time by however much the unsplit
+    loop overlaps them. Every field is optional, because records measured
+    without the pass carry none of them.
+    """
+
+    pack: float | None = None
+    halo: float | None = None
+    compute: float | None = None
+    reduce: float | None = None
+    total: float | None = None
+
+    def phase(self, name: str) -> float | None:
+        return getattr(self, name)
+
+    def is_empty(self) -> bool:
+        return all(getattr(self, name) is None for name in CG_PHASE_NAMES)
+
+
 @dataclass(frozen=True)
 class BackendSummary:
     backend: str
@@ -132,6 +162,7 @@ class BackendSummary:
     status: Status = Status.OK
     runs: tuple[RunStats, ...] = ()
     across_runs: AcrossRuns | None = None
+    phases: PhaseBreakdown | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +182,7 @@ class SummaryRow:
     valid_all: bool
     case: str = ""
     status: Status = Status.OK
+    phases: PhaseBreakdown | None = None
 
 
 GroupedMeasurements = dict[tuple[str, str, int, str, str], list[Measurement]]

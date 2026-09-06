@@ -114,7 +114,9 @@ submit() {
 # determined without a cluster, without modules, and without $SCRATCH.
 explain_cell() {
   local bench="$1" backend="$2" topo="$3"
-  local ucc_note=""
+  # Kept in step with job.sh, which computes these two paths for real. A
+  # non-default library version suffixes both; see cluster/<cluster>/layout.sh.
+  local tag="${GPU_BENCH_VARIANT_TAG:-}"
   cat <<EOF
 cell        : $bench / $backend / $topo
 run entry   : cluster/harness/launch.sh
@@ -125,12 +127,13 @@ backend row : cluster/$GPU_BENCH_CLUSTER/backends.sh
   runtime   : cluster/$GPU_BENCH_CLUSTER/runtime/$GPU_BENCH_RUNTIME.sh
   launcher  : $GPU_BENCH_LAUNCHER
   preset    : $GPU_BENCH_PRESET
-  binary    : build/$GPU_BENCH_PRESET/$GPU_BENCH_BINDIR/${GPU_BENCH_BINARY_PREFIX}_${bench}
+  binary    : build${tag}/$GPU_BENCH_PRESET/$GPU_BENCH_BINDIR/${GPU_BENCH_BINARY_PREFIX}_${bench}
 benchmark   : cluster/harness/experiments/$bench/common.sh
 topology    : $GPU_BENCH_NODES node(s) x $GPU_BENCH_TASKS_PER_NODE GPU(s) = $((GPU_BENCH_NODES * GPU_BENCH_TASKS_PER_NODE)) ranks
 sbatch      : --nodes=$GPU_BENCH_NODES --ntasks-per-node=$GPU_BENCH_TASKS_PER_NODE --gres=gpu:$GPU_BENCH_TASKS_PER_NODE --time=$(gpu_bench_walltime_for "$GPU_BENCH_NODES")
-results     : results/${bench//_/-}-${backend//_/-}-$topo/$bench
+results     : ${GPU_BENCH_RESULTS_ROOT:-results$tag}/${bench//_/-}-${backend//_/-}-$topo/$bench
 account     : ${SBATCH_ACCOUNT:-Slurm default}   partition: $SBATCH_PARTITION
+libraries   : NVSHMEM $GPU_BENCH_NVSHMEM_VERSION${tag:+   prefix $NVSHMEM_HOME}
 
 environment (definitions in execution order; the first one wins):
 EOF

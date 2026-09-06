@@ -2,11 +2,9 @@
 # UCX transport tuning for the runtimes that move GPU buffers through Open MPI's
 # UCX point-to-point layer: mpi-cuda, sycl-mpi and oshmpi.
 #
-# These three carried an identical copy of this block, differing only in the name
-# of the override variable (GPU_BENCH_{CUDA,SYCL,OSHMPI}_UCX_TLS). Three copies of
-# the tuning that decides an inter-node comparison is three chances for the
-# comparison to be measuring a settings difference instead. One copy, one
-# override name: GPU_BENCH_UCX_*.
+# One copy, one set of override names (GPU_BENCH_UCX_*): this tuning decides an
+# inter-node comparison, so a per-runtime copy is a chance for the comparison to
+# measure a settings difference instead.
 #
 # nvshmem.sh deliberately does NOT source this: NVSHMEM drives its own transport
 # and only wants the intra/inter TLS choice, not the rendezvous tuning.
@@ -34,8 +32,7 @@ if [[ ${GPU_BENCH_JOB_NODES:-1} -gt 1 ]]; then
   fi
   # Service level 1 enables adaptive routing on Leonardo's Dragonfly+ fabric.
   export UCX_IB_SL=${UCX_IB_SL:-1}
-  # Two rails: Leonardo nodes have two HCAs, and one rail leaves half the
-  # inter-node bandwidth unused on large messages.
+  # Two rails, though the node has four mlx5 devices.
   export UCX_MAX_RNDV_RAILS=${UCX_MAX_RNDV_RAILS:-2}
 else
   # Single node: no InfiniBand transport, so leave rc out entirely.

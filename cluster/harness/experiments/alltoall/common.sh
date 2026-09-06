@@ -6,8 +6,12 @@ GPU_BENCH_N_LABEL="count per peer"
 
 source "$GPU_BENCH_PROJECT_ROOT/cluster/harness/experiments/common.sh"
 
-# UCC regresses personalized exchanges on the validated Leonardo stack.
-export OMPI_MCA_coll_ucc_enable=${OMPI_MCA_coll_ucc_enable:-0}
+# UCC avoids Open MPI's pathological small-message alltoall at 16+ ranks: at
+# 8n4g with 256 B per peer the tuned path takes 974 us against UCC's 31 us, and
+# the collapse persists to 512 B per peer. UCC does regress large messages --
+# above ~16 KB per peer on multi-node topologies, by at most 1.8x -- so this is
+# a trade, not a free win, and the measured crossover is in the README.
+export OMPI_MCA_coll_ucc_enable=${OMPI_MCA_coll_ucc_enable:-1}
 
 # alltoall sends GPU_BENCH_N elements to every peer (send/recv buffers are ranks*GPU_BENCH_N).
 gpu_bench_experiment_defaults() {

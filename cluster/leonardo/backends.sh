@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Backend registry.
-#
-# Every field here was a hand-copied line in each of 230 near-identical job
-# scripts. It is a backend constant, so it belongs in one table.
+# Backend registry: everything that is constant about a backend, in one table.
 #
 # Fields, colon-separated: stack:runtime:launcher:preset:bindir:binary_prefix
 #
@@ -17,6 +14,13 @@
 # target names from two different presets -- the difference is which transport
 # oneCCL was configured against -- so they share a binary_prefix and differ in
 # preset and runtime.
+#
+# A library *version* is deliberately not a backend row. cuda_nvshmem names the
+# backend; which NVSHMEM it was built against is a property of the run, selected
+# by GPU_BENCH_NVSHMEM_VERSION (see layout.sh) and recorded in the build and
+# results paths. A row per version would multiply this table by every version
+# anyone wanted to try, and would need a matching preset, benchscribe enum entry
+# and plot colour for each.
 GPU_BENCH_BACKENDS=(
   "cuda_mpi:cuda:mpi-cuda:srun:leonardo-cuda-mpi:src/mpi/cuda:cuda_mpi"
   "cuda_nccl:cuda:mpi-cuda:srun:leonardo-cuda-nccl:src/xccl/cuda:cuda_nccl"

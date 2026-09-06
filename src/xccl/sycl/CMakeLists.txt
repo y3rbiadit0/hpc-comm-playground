@@ -106,10 +106,10 @@ if(GPU_BENCH_ONECCL_USE_OSHMPI)
   list(APPEND _oneccl_link_libraries ${OSHMPI_LIBRARIES})
 endif()
 
-# Binaries stay in this directory rather than in the tier subdirectories: the
-# experiment job scripts under cluster/leonardo/experiments hardcode
-# build/<preset>/src/xccl/sycl/<target>, and the source layout is a reading aid,
-# not a deployment contract.
+# Binaries land here, not in the microbench/ and application/ subdirectories:
+# cluster/harness/job.sh resolves one path per backend from the registry in
+# cluster/<cluster>/backends.sh. The source layout is a reading aid; the flat
+# output directory is the contract.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 add_subdirectory(microbench)    # one operation, swept over message size

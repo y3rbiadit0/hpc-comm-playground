@@ -9,9 +9,9 @@ set -euo pipefail
 #   GPU_BENCH_FORCE=1 ./cluster/leonardo/bootstrap.sh ...  # rebuild even if installed
 #
 # Each target is cluster/leonardo/deps/<name>.sh and declares the stack it needs,
-# what it requires, and a path that proves it is already built. Adding a backend
-# means adding one file there - and one in runtime/, and one directory per
-# experiment.
+# what it requires, and a path that proves it is already built. A backend only
+# needs one here if it depends on a library this project installs; the rest of a
+# backend is a row in backends.sh, a file in runtime/, and a CMake preset.
 #
 # The prerequisites this cannot install are a CUDA-capable DPC++ compiler and
 # hwloc; point DPCPP_HOME and HWLOC_ROOT at them (see the Leonardo README).
@@ -62,9 +62,10 @@ resolve() {
     # shellcheck disable=SC1090
     source "$file"
 
-    # Every target currently needs the sycl stack, and environment.sh mutates the
-    # shell, so mixing stacks in one invocation would build against the wrong
-    # toolchain. Refuse rather than do that silently.
+    # environment.sh mutates the shell, so a run that mixed stacks would build
+    # later targets against the wrong toolchain. Targets are split across both
+    # (nvshmem is cuda, oneccl and benchmarks are sycl), so refuse rather than
+    # do that silently.
     if [[ -n "$stack" && -n "$GPU_BENCH_BUILD_STACK" && "$GPU_BENCH_BUILD_STACK" != "$stack" ]]; then
         printf 'error: %s needs the %s stack, but %s is already selected\n' \
             "$target" "$GPU_BENCH_BUILD_STACK" "$stack" >&2

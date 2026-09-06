@@ -17,11 +17,16 @@ from characterize import characterize
 from cli import main
 from model import GroupKey, MetricName, Status
 from render import (
+    phase_overlap,
+    phase_rows,
     render_csv,
     render_fit_csv,
     render_fit_json,
     render_fit_markdown,
+    render_json,
     render_markdown,
+    render_phase_csv,
+    render_phase_markdown,
 )
 from scan import parse_report_line, scan_results
 from summary import SummaryTable
@@ -279,6 +284,69 @@ class BenchscribeTest(unittest.TestCase):
         )
         self.assertEqual(by_backend["cuda_mpi"]["alpha"], 5.0)
         self.assertEqual(by_backend["cuda_nccl"]["binf_gbs"], 23.0)
+
+
+    def _phase_table(self):
+        """A cg_step point with a breakdown, beside one without."""
+        line = (
+            "cuda_mpi_cg_step n=512 ranks=16 bytes=4096 iters=50 warmup=10 "
+            "time_per_iter_s=0.000111 usec=111.0 min_usec=110.0 max_usec=115.0 "
+            "gbytes_per_s=0.037 phase_pack_usec=13.0 phase_halo_usec=22.0 "
+            "phase_compute_usec=24.0 phase_reduce_usec=59.0 phase_sum_usec=118.0 "
+            "validation=PASS"
+        )
+        bare = (
+            "sycl_mpi_cg_step n=512 ranks=16 bytes=4096 iters=50 warmup=10 "
+            "time_per_iter_s=0.000164 usec=164.0 min_usec=161.0 max_usec=170.0 "
+            "gbytes_per_s=0.025 validation=PASS"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cg-step-cuda-mpi-4n4g" / "cg_step"
+            root.mkdir(parents=True)
+            (root / "job-1-1-stdout.txt").write_text(line + "\n" + bare + "\n")
+            return SummaryTable.from_measurements(scan_results(Path(tmp)))
+
+    def test_phase_rows_only_include_points_that_carry_a_breakdown(self):
+        table = self._phase_table()
+        rows = phase_rows(table)
+        self.assertEqual([row.backend for row in rows], ["cuda_mpi"])
+        # A record measured without the pass has no breakdown, which is not the
+        # same as a breakdown of zero.
+        bare = [row for row in table.rows() if row.backend == "sycl_mpi"]
+        self.assertEqual(len(bare), 1)
+        self.assertIsNone(bare[0].phases)
+
+    def test_phase_overlap_is_the_sum_less_the_reported_time(self):
+        row = phase_rows(self._phase_table())[0]
+        self.assertAlmostEqual(row.phases.pack, 13.0)
+        self.assertAlmostEqual(row.phases.total, 118.0)
+        # 118 serialized against 111 reported: the unsplit loop overlapped 7 us.
+        self.assertAlmostEqual(phase_overlap(row), 7.0)
+
+    def test_phase_views_render_every_phase(self):
+        table = self._phase_table()
+        out = io.StringIO()
+        render_phase_markdown(table, out)
+        text = out.getvalue()
+        for phase in ("pack", "halo", "compute", "reduce"):
+            self.assertIn(phase, text)
+        self.assertIn("`cuda_mpi`", text)
+        self.assertNotIn("`sycl_mpi`", text)
+
+        out = io.StringIO()
+        render_phase_csv(table, out)
+        rows = list(csv.DictReader(io.StringIO(out.getvalue())))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["compute"], "24")
+        self.assertEqual(rows[0]["overlap"], "7")
+
+    def test_points_json_carries_the_breakdown_and_null_without_it(self):
+        table = self._phase_table()
+        out = io.StringIO()
+        render_json(table, out)
+        points = {point["backend"]: point for point in json.loads(out.getvalue())["points"]}
+        self.assertEqual(points["cuda_mpi"]["phases"]["compute"], 24.0)
+        self.assertIsNone(points["sycl_mpi"]["phases"])
 
 
 if __name__ == "__main__":

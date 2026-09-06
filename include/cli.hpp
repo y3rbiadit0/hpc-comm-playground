@@ -96,6 +96,21 @@ inline std::vector<std::size_t> parse_size_list_arg(int argc, char** argv, int i
   return sizes;
 }
 
+/* Like parse_size_list_arg, but a missing argument means "just `value`" rather
+ * than a power-of-two sweep.
+ *
+ * For benchmarks whose size changes the decomposition rather than only the
+ * message, so that a bare invocation keeps measuring the one configuration it
+ * always measured. cg_step's grid side sets the rank's column count; sweeping it
+ * by default would silently turn one measurement into twenty. */
+inline std::vector<std::size_t> parse_size_list_or_single(int argc, char** argv, int index,
+                                                          std::size_t value) {
+  if (argc <= index) {
+    return {value};
+  }
+  return parse_size_list_arg(argc, argv, index, value);
+}
+
 inline int parse_positive_int_arg(int argc, char** argv, int index, int default_value) {
   if (argc <= index) {
     return default_value;

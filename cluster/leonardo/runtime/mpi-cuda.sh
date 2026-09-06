@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The Open MPI + UCX baseline every MPI-backed runtime shares.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/_openmpi.sh"
-
-# UCX transport tuning shared with the other GPU-buffer MPI runtimes.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/_ucx-gpu.sh"
 
 # NCCL's own service level, for the NCCL-backed benchmarks built on this stack.

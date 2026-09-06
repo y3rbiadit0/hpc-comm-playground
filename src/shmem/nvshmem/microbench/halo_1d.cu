@@ -36,11 +36,9 @@ namespace cg = cooperative_groups;
 //
 // The payload is split across blocks as plain (signal-less) puts. Each block
 // completes its own issued operations before a grid sync, then block 0 raises a
-// single signal per direction, which the waiter gates on. Earlier this used a
-// per-block SIGNAL_ADD counted up to
-// (iteration * active_blocks); on the IBGDA-less proxy path those many concurrent
-// signal-adds could be dropped and deadlock the wait, so it was collapsed to one
-// signal per direction per iteration (see the kernel comment for the full story).
+// single signal per direction, which the waiter gates on. One signal per
+// direction per iteration is load-bearing, not a simplification -- see the
+// kernel comment before changing it.
 //
 // Launched with nvshmemx_collective_launch so that both grid.sync() and
 // in-kernel NVSHMEM point-to-point synchronization are legal across PEs.

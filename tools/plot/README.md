@@ -38,11 +38,24 @@ environment, `uv run --project tools/plot python -m gpu_bench_plot` is equivalen
 | `fit` | α, B∞ and n½ as grouped bars, one panel per measure (needs `--fit`) |
 | `heatmap` | speedup vs the `cuda_mpi` baseline, backend × message size |
 | `dist` | per-job timing distributions at one message size, as box plots (`--size`) |
+| `phases` | `cg_step`'s per-phase breakdown at one size, stacked per backend (`--size`) |
 
 Other options: `--figure` picks one of the above or `all`, `--theme light|dark`,
 `--format svg|png|pdf`, `--benchmark` filters to one benchmark, and `--size`
 chooses which message size the `dist` figure shows (`min` by default, `max`, or
 a byte count snapped to the nearest swept size).
+
+### Reading the `phases` figure
+
+Bars total the phase sum, which is the step's cost with no overlap between
+phases. The tick marks the reported per-iteration time, so the gap between the
+bar end and the tick is how much the unsplit loop overlaps its phases. Only
+`cg_step` measured with `GPU_BENCH_CG_PHASES=1` carries a breakdown; for anything
+else the figure is skipped rather than drawn empty.
+
+The four phase colours are their own slots, not the backend ones: a hue means a
+backend in every other figure, and letting it also mean a phase here would make
+the palette ambiguous across the figure set.
 
 ### Reading the `dist` figure
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The Open MPI + UCX baseline every MPI-backed runtime shares.
+# _openmpi.sh only: NVSHMEM drives its own transport, so _ucx-gpu.sh's
+# rendezvous tuning would not apply. See the TLS choice at the end of this file.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/_openmpi.sh"
 
 # Aligned with the other MPI-using runtimes. NVSHMEM uses MPI only to bootstrap
@@ -12,8 +13,44 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/_openmpi.sh"
 # deprecation banner into every rank's stderr on every run.
 
 export NVSHMEM_BOOTSTRAP=${NVSHMEM_BOOTSTRAP:-MPI}
-export NVSHMEM_REMOTE_TRANSPORT=${NVSHMEM_REMOTE_TRANSPORT:-ibrc}
-export NVSHMEM_IB_ENABLE_IBGDA=${NVSHMEM_IB_ENABLE_IBGDA:-0}
+
+# Transport defaults follow the library the run selected (layout.sh).
+#
+# The nvhpc module ships NVSHMEM 2.11, which has only the IBRC proxy path. A
+# bootstrapped 3.x has CPU-assisted IBGDA, which is the reason for bootstrapping
+# one at all: Leonardo cannot run classic IBGDA -- it needs nvidia.ko loaded with
+# PeerMappingOverride=1, absent from /proc/driver/nvidia/params, and
+# NVreg_EnableStreamMemOPs=1, which is 0. Both live in
+# /etc/modprobe.d/nvidia.conf behind a driver reload, so both are a CINECA
+# request rather than a job-script change. CPU-assisted IBGDA is the user-space
+# route around that: the GPU still generates the work requests and a CPU handler
+# rings the NIC doorbell, so the mapping the driver will not grant is never
+# needed. It arrived in 3.0 and stopped requiring GDRCopy in 3.4.5.
+#
+# The version decides only the default transport. Everything else follows from
+# the transport actually in effect, so NVSHMEM_REMOTE_TRANSPORT is a single
+# coherent knob: setting it to ibrc for a 3.x run holds the transport constant
+# and reads the version against 2.11 on the same proxy path -- which separates
+# "newer NVSHMEM" from "IBGDA instead of IBRC", two claims that are otherwise
+# measured as one, and it does so without also having to remember to turn the
+# two IBGDA settings off by hand.
+if [[ ${GPU_BENCH_NVSHMEM_VERSION:-module} == module ]]; then
+  export NVSHMEM_REMOTE_TRANSPORT=${NVSHMEM_REMOTE_TRANSPORT:-ibrc}
+else
+  export NVSHMEM_REMOTE_TRANSPORT=${NVSHMEM_REMOTE_TRANSPORT:-ibgda}
+fi
+
+if [[ ${NVSHMEM_REMOTE_TRANSPORT} == ibgda ]]; then
+  export NVSHMEM_IB_ENABLE_IBGDA=${NVSHMEM_IB_ENABLE_IBGDA:-1}
+  export NVSHMEM_IBGDA_NIC_HANDLER=${NVSHMEM_IBGDA_NIC_HANDLER:-cpu}
+else
+  export NVSHMEM_IB_ENABLE_IBGDA=${NVSHMEM_IB_ENABLE_IBGDA:-0}
+fi
+if [[ ${NVSHMEM_IB_ENABLE_IBGDA} == 1 && ${NVSHMEM_REMOTE_TRANSPORT} == ibrc ]]; then
+  printf '%s\n' \
+    'warning: NVSHMEM_IB_ENABLE_IBGDA=1 does not override NVSHMEM_REMOTE_TRANSPORT=ibrc; this run will still use IBRC' \
+    >&2
+fi
 # NVSHMEM dispatches its collectives to NCCL when it is available. Disabling
 # that leaves its own reduction path, which does not scale:
 #

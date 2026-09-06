@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-# SLURM submission defaults for Leonardo, in one place rather than repeated in
-# every job script.
+# SLURM submission defaults for Leonardo.
 #
 # sbatch reads SBATCH_ACCOUNT and SBATCH_PARTITION from the environment, so the
 # job scripts carry no -A/-p directives. Set the account explicitly when your
@@ -12,8 +11,8 @@
 # Precedence is the usual SLURM one - an explicit `sbatch --account=...` still
 # wins over anything set here.
 #
-# Sourced by cluster/harness/launch.sh --all and by cluster/leonardo/environment.sh, so both
-# `make submit` and a hand-run sbatch from a prepared shell pick it up.
+# Sourced by cluster/leonardo/cluster.sh and by environment.sh, so both `make
+# submit` and a hand-run sbatch from a prepared shell pick it up.
 
 if [[ -n ${GPU_BENCH_SLURM_ACCOUNT:-} ]]; then
   export SBATCH_ACCOUNT=$GPU_BENCH_SLURM_ACCOUNT

@@ -35,6 +35,29 @@ Benchscribe:
 The process record contract is documented in
 [`docs/reference/output-schema.md`](../../docs/reference/output-schema.md).
 
+## Phase Breakdown
+
+`cg_step` can emit a per-phase breakdown (`GPU_BENCH_CG_PHASES=1`). `--phases`
+reports it, in any of the three formats:
+
+```bash
+python3 tools/benchscribe results --phases
+python3 tools/benchscribe results --phases --format csv > phases.csv
+```
+
+Each row carries the four phases, their sum, the reported per-iteration time,
+and the difference between the last two. That difference is the point of the
+view: the breakdown comes from a second pass that synchronizes between phases,
+so its sum is the step's cost with no overlap, while the reported time is what
+the unsplit loop achieved. A large overlap means the backend pipelines the step
+(NCCL, whose whole step is one asynchronous stream); a near-zero overlap means it
+does not.
+
+Points measured without the pass carry no breakdown at all, which is distinct
+from a breakdown of zero, and they are omitted from this view rather than shown
+as blank. `points.json` gains an optional `phases` object, null wherever the pass
+did not run - an additive field, so `schema_version` stays at 1.
+
 ## Characterization
 
 For message-size sweeps, `--fit` reduces each backend curve to descriptive

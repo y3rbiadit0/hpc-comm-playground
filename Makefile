@@ -46,14 +46,23 @@ build:
 
 clean:
 	@test -n "$(PRESET)" || { echo 'missing PRESET=<preset>'; exit 2; }
+	# build*/ rather than build/: selecting a non-default library version puts
+	# that build in its own tree (build-nvshmem-3.7.2/, see
+	# cluster/leonardo/layout.sh), and cleaning a preset should not leave the
+	# other selections of it behind. The glob is at the top level only, so it
+	# cannot catch a preset whose name merely extends this one.
 	case "$(PRESET)" in
-	  leonardo) paths="$(addprefix build/,$(LEONARDO_PRESETS))" ;;
-	  leonardo-cuda) paths="$(addprefix build/,$(LEONARDO_CUDA_PRESETS))" ;;
-	  leonardo-sycl) paths="$(addprefix build/,$(LEONARDO_SYCL_PRESETS))" ;;
-	  *) paths="build/$(PRESET)" ;;
+	  leonardo) presets="$(LEONARDO_PRESETS)" ;;
+	  leonardo-cuda) presets="$(LEONARDO_CUDA_PRESETS)" ;;
+	  leonardo-sycl) presets="$(LEONARDO_SYCL_PRESETS)" ;;
+	  *) presets="$(PRESET)" ;;
 	esac
-	printf 'Removing:%s\n' " $${paths}"
-	rm -rf $${paths}
+	shopt -s nullglob
+	paths=()
+	for preset in $${presets}; do paths+=(build*/"$${preset}"); done
+	if [[ $${#paths[@]} -eq 0 ]]; then echo 'Nothing to remove.'; exit 0; fi
+	printf 'Removing:%s\n' " $${paths[*]}"
+	rm -rf "$${paths[@]}"
 
 leonardo: leonardo-cuda leonardo-sycl
 

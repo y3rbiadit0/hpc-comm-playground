@@ -6,7 +6,10 @@ GPU_BENCH_N_LABEL="tokens per rank"
 
 source "$GPU_BENCH_PROJECT_ROOT/cluster/harness/experiments/common.sh"
 
-# MoE uses variable personalized exchanges, where UCC regresses the MPI path.
+# Unmeasured. This inherited the alltoall rationale, which the topology sweep
+# then disproved for alltoall itself -- but MoE exchanges are alltoallv, a
+# different Open MPI path, so the value stands until MoE has its own A/B rather
+# than being flipped on alltoall's evidence.
 export OMPI_MCA_coll_ucc_enable=${OMPI_MCA_coll_ucc_enable:-0}
 
 gpu_bench_experiment_defaults() {

@@ -36,6 +36,28 @@ uses `batch_iters=1`; its `steady` case uses the requested iteration count.
 initiator's measured round trip, so `usec` and `gbytes_per_s` are one-way values.
 The peer's timing window is different and is not combined with the initiator's.
 
+## Phase Breakdown
+
+`cg_step` optionally emits a per-phase breakdown, enabled with
+`GPU_BENCH_CG_PHASES=1`:
+
+```text
+phase_pack_usec=<us> phase_halo_usec=<us> phase_compute_usec=<us> \
+  phase_reduce_usec=<us> phase_sum_usec=<us>
+```
+
+These come from a **second pass**, not from the reported loop. Splitting a step
+into phases means synchronizing at every boundary, which both costs time and
+removes overlap the unsplit step is free to exploit, so instrumenting the
+headline loop would change `usec` and break comparability with results measured
+before the breakdown existed. `usec` therefore still comes from the unsplit loop,
+and each phase is reduced across ranks the same way `usec` is.
+
+Read them as an upper bound per phase: `phase_sum_usec` is what the step would
+cost with no overlap, so `phase_sum_usec - usec` is how much the phases actually
+overlapped. Records without these fields were measured without the pass, not with
+a zero phase.
+
 ## Status And Validation
 
 - Numeric analysis uses only `status=OK validation=PASS` records.

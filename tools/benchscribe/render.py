@@ -7,7 +7,7 @@ import datetime as dt
 from typing import TextIO
 
 from characterize import ALPHA_MAX_BYTES, Characterization
-from model import Status, SummaryRow
+from model import CG_PHASE_NAMES, MetricName, Status, SummaryRow
 from summary import SummaryTable
 
 
@@ -225,6 +225,10 @@ def render_json(table: SummaryTable, out: TextIO) -> None:
                     "status": summary.status.value,
                     "runs": [asdict(run) for run in summary.runs],
                     "across_runs": asdict(summary.across_runs) if summary.across_runs else None,
+                    # Additive and optional: null wherever the phase pass did not
+                    # run, which is most results. Readers that ignore it are
+                    # unaffected, so this does not bump schema_version.
+                    "phases": asdict(summary.phases) if summary.phases else None,
                 }
             )
     json.dump(
@@ -232,6 +236,106 @@ def render_json(table: SummaryTable, out: TextIO) -> None:
             "schema_version": 1,
             "generated": dt.datetime.now().isoformat(timespec="seconds"),
             "points": points,
+        },
+        out,
+        indent=2,
+    )
+    out.write("\n")
+
+
+def phase_rows(table: SummaryTable) -> list[SummaryRow]:
+    """Rows that carry a phase breakdown, in report order."""
+    return [row for row in table.rows() if row.phases is not None]
+
+
+def phase_overlap(row: SummaryRow) -> float | None:
+    """How much the unsplit step overlaps its phases, in the metric's unit.
+
+    The phase pass synchronizes between phases, so its total is the no-overlap
+    cost; the reported value is what the unsplit loop achieved. Only meaningful
+    when the reported metric is the per-iteration time in microseconds - against
+    a bandwidth the subtraction has no meaning.
+    """
+    if row.metric.name != MetricName.USEC or row.value is None:
+        return None
+    total = row.phases.total if row.phases else None
+    return None if total is None else total - row.value
+
+
+def render_phase_markdown(table: SummaryTable, out: TextIO) -> None:
+    stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    out.write("# Phase Breakdown\n\n")
+    out.write(f"_Generated {stamp}._\n\n")
+    out.write(
+        "Per-phase means from the opt-in second pass (`GPU_BENCH_CG_PHASES=1`), which "
+        "synchronizes between phases. **Sum** is what the step would cost with no "
+        "overlap; **Reported** is the unsplit loop's per-iteration time; **Overlap** is "
+        "the difference, so it measures how much the phases overlap in the loop that is "
+        "actually reported.\n\n"
+    )
+    rows = phase_rows(table)
+    if not rows:
+        out.write("_No result carries a phase breakdown._\n")
+        return
+
+    current = None
+    for row in rows:
+        heading = (row.benchmark, row.case, row.topology)
+        if heading != current:
+            current = heading
+            label = f"{row.benchmark} / {row.topology}"
+            if row.case:
+                label += f" / {row.case}"
+            out.write(f"## {label}\n\n")
+            out.write("| Size (n) | Backend | " + " | ".join(
+                f"{name} (us)" for name in CG_PHASE_NAMES
+            ) + " | Sum (us) | Reported (us) | Overlap (us) |\n")
+            out.write("| ---: | --- | " + " | ".join("---:" for _ in CG_PHASE_NAMES)
+                      + " | ---: | ---: | ---: |\n")
+        cells = " | ".join(format_number(row.phases.phase(name)) for name in CG_PHASE_NAMES)
+        out.write(
+            f"| {row.n} | `{row.backend}` | {cells} | {format_number(row.phases.total)} "
+            f"| {format_number(row.value)} | {format_number(phase_overlap(row))} |\n"
+        )
+    out.write("\n")
+
+
+def phase_record(row: SummaryRow) -> dict:
+    record = {
+        "benchmark": row.benchmark,
+        "case": row.case,
+        "topology": row.topology,
+        "backend": row.backend,
+        "n": row.n,
+        "unit": "us",
+    }
+    for name in CG_PHASE_NAMES:
+        record[name] = row.phases.phase(name)
+    record["sum"] = row.phases.total
+    record["reported"] = row.value
+    record["overlap"] = phase_overlap(row)
+    return record
+
+
+def render_phase_csv(table: SummaryTable, out: TextIO) -> None:
+    fields = ["benchmark", "case", "topology", "backend", "n", "unit",
+              *CG_PHASE_NAMES, "sum", "reported", "overlap"]
+    writer = csv.DictWriter(out, fieldnames=fields)
+    writer.writeheader()
+    for row in phase_rows(table):
+        record = phase_record(row)
+        writer.writerow(
+            {k: ("" if v is None else f"{v:.9g}" if isinstance(v, float) else v)
+             for k, v in record.items()}
+        )
+
+
+def render_phase_json(table: SummaryTable, out: TextIO) -> None:
+    json.dump(
+        {
+            "schema_version": 1,
+            "generated": dt.datetime.now().isoformat(timespec="seconds"),
+            "phases": [phase_record(row) for row in phase_rows(table)],
         },
         out,
         indent=2,

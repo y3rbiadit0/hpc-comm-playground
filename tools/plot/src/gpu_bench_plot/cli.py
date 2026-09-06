@@ -14,10 +14,17 @@ from .data import (
     is_application_benchmark,
     load_json,
 )
-from .figures import draw_cases, draw_distribution, draw_fit, draw_heatmap, draw_sweep
+from .figures import (
+    draw_cases,
+    draw_distribution,
+    draw_fit,
+    draw_heatmap,
+    draw_phases,
+    draw_sweep,
+)
 from .theme import THEMES, apply_theme
 
-FIGURES = ("latency", "bandwidth", "fit", "heatmap", "dist", "cases")
+FIGURES = ("latency", "bandwidth", "fit", "heatmap", "dist", "cases", "phases")
 
 # "sweep" was the original name. It described the method (a message-size sweep)
 # rather than the quantity, which made the latency curve hard to find among
@@ -121,6 +128,21 @@ def render_benchmark(
         else:
             out, size = result
             print(f"{benchmark}: dist figure drawn at {size} bytes", file=sys.stderr)
+            written.append(out)
+    if "phases" in wanted:
+        result = draw_phases(sweep, theme, args.outdir, f"{benchmark}-phases", args.ext, args.size)
+        if result is None:
+            # Not a failure: only cg_step carries a breakdown, and only when
+            # measured with GPU_BENCH_CG_PHASES=1.
+            if args.figure == "phases":
+                print(
+                    f"warning: {benchmark}: no phase breakdown in these results; "
+                    f"re-run with GPU_BENCH_CG_PHASES=1",
+                    file=sys.stderr,
+                )
+        else:
+            out, size = result
+            print(f"{benchmark}: phases figure drawn at {size} bytes", file=sys.stderr)
             written.append(out)
     if "heatmap" in wanted:
         out = draw_heatmap(sweep, theme, args.outdir, f"{benchmark}-speedup", args.ext)

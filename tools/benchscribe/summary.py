@@ -6,12 +6,14 @@ from dataclasses import dataclass
 
 from model import (
     BASELINE_BACKEND,
+    CG_PHASE_NAMES,
     METRIC_SPECS,
     AcrossRuns,
     BackendSummary,
     GroupedMeasurements,
     GroupKey,
     Measurement,
+    PhaseBreakdown,
     RunStats,
     MetricName,
     MetricSpec,
@@ -57,6 +59,33 @@ def run_stats(record: Measurement, metric: MetricSpec) -> RunStats:
         stddev=get("stddev_usec"),
         iterations=int(iters) if iters is not None else None,
     )
+
+
+def phase_breakdown(records: list[Measurement]) -> PhaseBreakdown | None:
+    """Average the per-phase fields over the trials that carry them.
+
+    Returns None when no record has them, which is the common case: the phase
+    pass is opt-in, so most results have no breakdown at all. That is different
+    from a breakdown whose phases are zero, and the two must not be conflated.
+    """
+    means: dict[str, float | None] = {}
+    for name in (*CG_PHASE_NAMES, "sum"):
+        values = [
+            value
+            for value in (
+                parse_float(record.fields.get(f"phase_{name}_usec")) for record in records
+            )
+            if value is not None
+        ]
+        means[name] = mean_or_none(values)
+    breakdown = PhaseBreakdown(
+        pack=means["pack"],
+        halo=means["halo"],
+        compute=means["compute"],
+        reduce=means["reduce"],
+        total=means["sum"],
+    )
+    return None if breakdown.is_empty() else breakdown
 
 
 def across_runs(records: list[Measurement], metric: MetricSpec) -> AcrossRuns:
@@ -226,6 +255,7 @@ class SummaryTable:
                 status=status,
                 runs=tuple(run_stats(record, metric) for record in supported_records),
                 across_runs=across_runs(supported_records, metric),
+                phases=phase_breakdown(supported_records),
             )
         return {key: dict(value) for key, value in groups.items()}
 
@@ -292,6 +322,7 @@ class SummaryTable:
             valid_all=summary.valid_all,
             case=key.case,
             status=summary.status,
+            phases=summary.phases,
         )
 
     def _row_sort_key(self, row: SummaryRow) -> tuple[bool, float, str]:

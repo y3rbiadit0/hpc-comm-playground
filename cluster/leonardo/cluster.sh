@@ -26,6 +26,12 @@ GPU_BENCH_CLUSTER_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # Optional account and default partition.
 source "$GPU_BENCH_CLUSTER_DIR/slurm.sh"
 
+# Install prefixes and the library-variant selection. Sourced here rather than
+# only from environment.sh because the harness needs GPU_BENCH_VARIANT_TAG
+# before any module is loaded: it keys the build directory a job resolves its
+# binary from, and the results tree that job writes to.
+source "$GPU_BENCH_CLUSTER_DIR/layout.sh"
+
 # Which backends exist here, and where their binaries land.
 source "$GPU_BENCH_CLUSTER_DIR/backends.sh"
 
@@ -40,12 +46,10 @@ gpu_bench_walltime_for() {
   fi
 }
 
-# Modules, compilers and library paths for a toolchain.
 gpu_bench_cluster_environment() {
   source "$GPU_BENCH_CLUSTER_DIR/environment.sh" "$1"
 }
 
-# Comm-library settings for one run.
 gpu_bench_cluster_runtime() {
   source "$GPU_BENCH_CLUSTER_DIR/runtime/$1.sh"
 }

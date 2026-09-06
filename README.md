@@ -9,7 +9,7 @@ The project currently targets NVIDIA GPUs and is validated on the Leonardo
 supercomputer. CUDA and SYCL implementations are provided where the underlying
 libraries support both programming models.
 
-## Benchmarks
+## 📊 Benchmarks
 
 | Benchmark | Kind | Measures |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ the behavior of a mixed workload. The rationale for this suite is documented in
 Defaults, supported topologies, and launch examples are in the
 [experiment operations](cluster/harness/README.md#experiment-operations).
 
-## Backend implementations
+## 🔀 Backend implementations
 
 | Model | Backend | Implementation |
 | --- | --- | --- |
@@ -41,7 +41,41 @@ Defaults, supported topologies, and launch examples are in the
 See the [support matrix](docs/reference/support-matrix.md) for benchmark, backend, and
 topology coverage.
 
-## Build
+## 🖥️ Clusters
+
+Benchmark definitions are machine-independent; everything about a machine --
+modules, compilers, CMake presets, communication-library tuning and scheduler
+policy -- lives in its own directory under `cluster/`.
+
+| Cluster | Scheduler | Accelerators | Status | Setup guide |
+| --- | --- | --- | --- | --- |
+| `leonardo` | Slurm | NVIDIA A100 | ✅ Validated | [`cluster/leonardo/README.md`](cluster/leonardo/README.md) |
+
+Select a machine with `GPU_BENCH_CLUSTER=<name>`; the launcher defaults to
+`leonardo`.
+
+### 🚀 Set up Leonardo
+
+From a login node, working in the repository root:
+
+| Step | Where |
+| --- | --- |
+| 1️⃣ Install the two SYCL prerequisites (DPC++ with NVPTX, hwloc) | [Prerequisites](cluster/leonardo/README.md#-prerequisites) |
+| 2️⃣ Bootstrap dependencies and build every preset | [Build](cluster/leonardo/README.md#-build) |
+| 3️⃣ Set a Slurm account and submit | [Run](cluster/leonardo/README.md#-run) |
+
+Only the SYCL backends need step 1 -- the CUDA presets build from cluster
+modules alone.
+
+### ➕ Add another cluster
+
+Create `cluster/<name>/cluster.sh` plus the `env/` and `runtime/` files it
+dispatches to, and register the machine's backends in `backends.sh`. The harness
+reaches a machine only through that one entry point, so adding a cluster must
+not require any change under `cluster/harness/`. The required functions are
+listed in [adding a cluster](cluster/harness/README.md#adding-a-cluster).
+
+## 🔧 Build
 
 ### Build DPC++
 
@@ -79,19 +113,12 @@ make init
 ```
 
 For prerequisite paths, dependency targets, and validated toolchains, follow the
-[Leonardo build guide](cluster/leonardo/README.md#build).
+[Leonardo build guide](cluster/leonardo/README.md#-build).
 
-## Run
+## ▶️ Run
 
-Machine-independent experiment definitions live in `cluster/harness`; machine
-configuration lives in `cluster/<name>`. Exact setup and submission commands
-belong to each cluster guide:
-
-| Cluster | Status | Guide |
-| --- | --- | --- |
-| Leonardo | Validated | [`cluster/leonardo/README.md`](cluster/leonardo/README.md) |
-
-The shared launcher accepts a benchmark, backend, and topology:
+Submission commands belong to each [cluster guide](cluster/README.md). The shared
+launcher accepts a benchmark, backend, and topology:
 
 ```bash
 cluster/harness/launch.sh --explain allreduce cuda_mpi 1n4g
@@ -102,7 +129,7 @@ cluster/harness/launch.sh allreduce cuda_mpi 1n4g
 [harness guide](cluster/harness/README.md) for matrix runs, overrides, result
 paths, and adding another cluster.
 
-## Analyze Results
+## 📈 Analyze Results
 
 Benchmark processes emit standardized `key=value` records. Benchscribe collects
 records from `results/`, and the plot package consumes its JSON output:
@@ -117,7 +144,7 @@ uv run --project tools/plot gpu-bench-plot \
 See [`tools/README.md`](tools/README.md) for the analysis workflow and
 [`docs/reference/output-schema.md`](docs/reference/output-schema.md) for the report contract.
 
-## Project Documentation
+## 📚 Project Documentation
 
 - [`docs/README.md`](docs/README.md): benchmark contracts, design, reference, and analysis
 - [`cluster/README.md`](cluster/README.md): cluster integration and supported systems

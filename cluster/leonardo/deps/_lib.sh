@@ -19,6 +19,12 @@
 # shellcheck disable=SC1090
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/layout.sh"
 
+# layout.sh is sourced by the harness too, including off-cluster where $SCRATCH
+# does not exist, so it cannot demand one. The build targets are the only
+# consumers of GPU_BENCH_WORK_ROOT, so the demand belongs here: a clone or a
+# build tree written to /gpu-comm-bench would fail later and less clearly.
+: "${SCRATCH:?set SCRATCH or GPU_BENCH_WORK_ROOT to a build filesystem}"
+
 gpu_bench_build_log() { printf '\n== %s\n' "$*"; }
 
 # gpu_bench_clone_at <url> <ref> <dir>

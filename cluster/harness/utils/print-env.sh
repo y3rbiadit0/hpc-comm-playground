@@ -27,10 +27,20 @@ gpu_bench_print_env() {
     NCCL_SOCKET_IFNAME
     NCCL_DEBUG
     # NVSHMEM / SHMEM
+    # Which NVSHMEM this run resolved, and from where. "module" is the one the
+    # nvhpc module ships; anything else is a bootstrapped release. Without these
+    # two a log cannot say which library produced its numbers, and that is the
+    # whole point of running more than one.
+    GPU_BENCH_NVSHMEM_VERSION
+    NVSHMEM_HOME
     NVSHMEM_IB_SL
     NVSHMEM_BOOTSTRAP
     NVSHMEM_REMOTE_TRANSPORT
     NVSHMEM_IB_ENABLE_IBGDA
+    # Which side rings the NIC doorbell under IBGDA. Only meaningful once the
+    # transport is ibgda, and load-bearing there: cpu is the handler that makes
+    # IBGDA usable without PeerMappingOverride=1.
+    NVSHMEM_IBGDA_NIC_HANDLER
     SHMEM_SYMMETRIC_SIZE
     OSHMPI_MPI_GPU_FEATURES
     # oneCCL / Intel MPI / libfabric
