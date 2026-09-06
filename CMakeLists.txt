@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(gpu_bench VERSION 0.0.2 LANGUAGES CXX)
+project(gpu_bench VERSION 0.0.3 LANGUAGES CXX)
 
 include(cmake/version.cmake)
 
